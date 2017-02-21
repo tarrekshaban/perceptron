@@ -1,7 +1,10 @@
 import random
+import copy
+from nltk.corpus import stopwords
 from random import shuffle
+import pickle
 
-# Build n_grams for the model
+# Stich the words in the n_gram together after zip() opperation
 def stich_ngrams(n_grams, n):
     grams = []
     for g in n_grams:
@@ -11,6 +14,7 @@ def stich_ngrams(n_grams, n):
         grams.append(s[0:len(s)-1])
     return grams
 
+# Build array n-grams
 def find_ngrams(input_list, n):
     input_list.insert(0,"<s>")
     input_list.insert(len(input_list),"<s>")
@@ -27,17 +31,31 @@ def random_val():
         return val
 
 # Primary Functions ============================================================
-def build_vocab(fd):
+def build_vocab(fd, t, remove_stop_words=False):
     index = 0
     vocab = {}
     for line in fd:
         words = line.split()
 
-        # Add bi-grams
-        bi_grams = find_ngrams(words[1:], 2)
-        for gram in bi_grams:
-            for word in gram:
-                lower_case_word = word.lower()
+        if remove_stop_words:
+            words_without = list()
+            words_without.append(words[0])  # Add the label to the list
+            stop = stopwords.words('english')
+            for word in words[1:]:
+                # Check if word is stop word
+                try:
+                    if word.lower() not in stop:
+                        words_without.append(word)
+                except UnicodeWarning:
+                    print word
+                    words_without.append(word)
+            words = copy.deepcopy(words_without)
+
+        if t is True:
+            # Add bi-grams
+            bi_grams = find_ngrams(words[1:], 2)
+            for gram in bi_grams:
+                lower_case_word = gram.lower()
                 if not vocab.has_key(lower_case_word):
                     vocab[lower_case_word] = index
                     index = index + 1
@@ -48,21 +66,35 @@ def build_vocab(fd):
             if not vocab.has_key(lower_case_word):
                 vocab[lower_case_word] = index
                 index = index + 1
+    print index
     return vocab, index
 
-def build_vector_models(fd, vocab):
+def build_vector_models(fd, vocab, t, remove_stop_words=False):
     vectors = []
     for line in fd:
         words = line.split()
         dic = {}
         tag = int(words[0])
 
-        # Add bi-grams
-        bi_grams = find_ngrams(words[1:], 2)
-        for gram in bi_grams:
-            for word in gram:
-                lower_case_word = word.lower()
-                if dic.has_key(lower_case_word):
+        if remove_stop_words:
+            words_without = list()
+            words_without.append(words[0])  # Add the label to the list
+            stop = stopwords.words('english')
+            for word in words[1:]:
+                # Check if word is stop word
+                try:
+                    if word.lower() not in stop:
+                        words_without.append(word)
+                except UnicodeWarning:
+                    words_without.append(word)
+            words = copy.deepcopy(words_without)
+
+        if t is True:
+            # Add bi-grams
+            bi_grams = find_ngrams(words[1:], 2)
+            for gram in bi_grams:
+                lower_case_word = gram.lower()
+                if vocab.has_key(lower_case_word):
                     dic[lower_case_word] = vocab[lower_case_word]
 
         # Add uni-grams
@@ -100,37 +132,12 @@ def update_y(W, ETA, X):
     for key, value in X.iteritems():
         W[value] = W[value] + ETA
     return W
-# Set up perceptron -----------------------------------
-fd = open("sst.train.tsv", 'r')
-# Vocab
-vocab_lookup_dict, size = build_vocab(fd)
 
-fd = open("sst.train.tsv", 'r')
-# Array of Vectors
-vectors = build_vector_models(fd, vocab_lookup_dict)
-print(size)
-# Weights
-weights = build_initial_weights(size)
-# Bias
-bias = [1 for i in range(5)]
-# Learning rate
-ETA = 0.1
-print ETA
-# Open DEV data set for test
-f_t = open("sst.dev.tsv", 'r')
-vectors_dev = build_vector_models(f_t, vocab_lookup_dict)
+def test_with_dev_data(weights, bias, vectors_dev):
+    # keeps track of number correct
+    count_correct = 0
 
-# Run perceptron --------------------------------------
-t = 0 # iternation number
-
-c = []
-while(t < 100):
-    # Do the "Double Shuffle" for good luck #Jinho
-    # vectors = shuffle(shuffle(vectors))
-    correct = 0.0
-    shuffle(vectors)
-    shuffle(vectors)
-    for i, (y, X) in enumerate(vectors):
+    for i, (y, X) in enumerate(vectors_dev):
         # Calculate scores
         predictions = calculate_outcome_scores(X, bias, weights)
         # Determine y_hat
@@ -138,34 +145,119 @@ while(t < 100):
         for m, p in enumerate(predictions):
             if y_hat[0] < p:
                 y_hat = (p, m)
-        # Continue to next iteration if y_hat and y are the same
+        # Add one to count if y and y_hat are the same!
         if y_hat[1] == y:
-            correct = correct + 1.0
-            continue
-        weights[y_hat[1]] = update_y_hat(weights[y_hat[1]], ETA, X)
-        weights[y] = update_y(weights[y], ETA, X)
-        bias[y_hat[1]] = bias[y_hat[1]] - ETA
-        bias[y] = bias[y] + ETA
-        # track[i][t%20] = y_hat[1]
-    c.append(correct)
-    t = t + 1
+            count_correct = count_correct + 1
 
-# for i in c:
-#     print i, len(vectors)
+    return float(count_correct)/float(len(vectors_dev))
 
-# Test perceptron --------------------------------------
-count_correct = 0
+def check_convergence(previous):
+    if len(previous) > 3:
+        one = previous.pop()
+        two = previous.pop()
+        three = previous.pop()
 
-for i, (y, X) in enumerate(vectors_dev):
-    # Calculate scores
-    predictions = calculate_outcome_scores(X, bias, weights)
-    # Determine y_hat
-    y_hat = (-10,0)
-    for m, p in enumerate(predictions):
-        if y_hat[0] < p:
-            y_hat = (p, m)
-    # Continue to next iteration if y_hat and y are the same
-    if y_hat[1] == y:
-        count_correct = count_correct + 1
+        if one == two and two == three:
+            return True
+        else:
+            return False
 
-print count_correct, len(vectors_dev)
+class Perceptron(object):
+    def __init__(self, train_data, dev_data, use_bi_grams=False, ETA=0.05, n=1, batch=True, is_eval=False, eval_data=None):
+        # Set up the perceptron algorithm
+        self.batch = batch
+        self.ETA = ETA
+        vocab_fd = open(train_data, 'r')
+        vector_fd = open(train_data, 'r')
+        dev_vector_fd = open(dev_data, 'r')
+        self.vocab, self.size = build_vocab(vocab_fd, use_bi_grams)
+        self.vectors = build_vector_models(vector_fd, self.vocab, use_bi_grams)
+        self.weights = build_initial_weights(self.size)
+        # Create batch vectors to collate the updates when batch flag is True
+        if batch:
+            # Deep copy of the weight vectors
+            self.batch_weights = copy.deepcopy(self.weights)
+        # Create the bias measure
+        self.bias = [1 for i in range(5)]
+        # Build vector models
+        self.vectors_dev = build_vector_models(dev_vector_fd, self.vocab, use_bi_grams)
+
+        # Run the algorithum
+        for i in range(0, n):
+            self.run(self.weights, self.bias)
+            if is_eval:
+                pickle.dump((self.weights, self.bias), open( "./data/weights.p", "wb" ) )
+                self.evaluate_weights(eval_data, use_bi_grams)
+            # Reset weights and bias for the next run
+            self.weights = build_initial_weights(self.size)
+            self.bias = [1 for i in range(5)]
+            # If we are using batch weights, also update this value
+            if self.batch:
+                self.batch_weights = copy.deepcopy(self.weights)
+
+    def evaluate_weights(self, eval_data, bigrams):
+        e_data_fd = open(eval_data, 'r')
+        w_eval_fd = open("./data/results.tsv", 'w')
+
+        vector_eval = build_vector_models(e_data_fd, self.vocab, bigrams)
+        for i, (y, X) in enumerate(vector_eval):
+            predictions = calculate_outcome_scores(X, self.bias, self.weights)
+            y_hat = (-10,0)
+            for m, p in enumerate(predictions):
+                if y_hat[0] < p:
+                    y_hat = (p, m)
+            w_eval_fd.write(str(y_hat[1])+"\n")
+
+    def run(self, weights, bias):
+        t = 0 # iternation number
+        tracker = []
+        while(t < 10000):
+            # Do the "Double Shuffle" for good luck ~Jinho
+            shuffle(self.vectors)
+            shuffle(self.vectors)
+            # The batch count
+            if self.batch:
+                b_count = 0
+            # Iterate through the entire vector set
+            for i, (y, X) in enumerate(self.vectors):
+                # Calculate scores
+                predictions = calculate_outcome_scores(X, bias, weights)
+                # Determine y_hat
+                y_hat = (-10,0)
+                for m, p in enumerate(predictions):
+                    if y_hat[0] < p:
+                        y_hat = (p, m)
+                # Continue to next iteration if y_hat and y are the same
+                if y_hat[1] == y:
+                    continue
+                # The update dance - two paths: batch and not batch
+                if not self.batch:
+                    # Update weights normally
+                    weights[y_hat[1]] = update_y_hat(weights[y_hat[1]], self.ETA, X)
+                    weights[y] = update_y(weights[y], self.ETA, X)
+                else:
+                    # Update the batch weights INSTEAD of the "main" weights
+                    self.batch_weights[y_hat[1]] = update_y_hat(weights[y_hat[1]], self.ETA, X)
+                    self.batch_weights[y] = update_y(weights[y], self.ETA, X)
+                    # If it has been 10 itterations of updates
+                    if b_count is 10:
+                        # Copy the values in the batch weights -> weights
+                        weights = copy.deepcopy(self.batch_weights)
+                    b_count += 1
+                # Update bias
+                bias[y_hat[1]] = bias[y_hat[1]] - self.ETA
+                bias[y] = bias[y] + self.ETA
+            # One rule I set for myself is that if you are done goign through
+            # all of the vectors, weights == batch_weights
+            if self.batch:
+                weights = copy.deepcopy(self.batch_weights)
+            # checks for convergence -------------------------------------------
+            v = round(test_with_dev_data(weights, bias, self.vectors_dev), 7)
+            tracker.append(v)
+            if check_convergence(tracker):
+                print v, t
+                break
+            t = t + 1
+
+if __name__ == '__main__':
+    Perceptron("./data/sst.train.tsv", "./data/sst.dev.tsv", use_bi_grams=True, batch=True, is_eval=True, eval_data="/Users/tshaban/Desktop/sst.tst.unlabeled.tsv")
